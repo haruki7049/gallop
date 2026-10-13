@@ -19,7 +19,7 @@ jobs:
       - name: Upload binaries to release
         uses: svenstaro/upload-release-action@2.11.5
         with:
-          file: result/share/coffee-chan.wav
+          file: result/share/gallop.wav
           file_glob: true
           tag: ${{ github.ref }}
           body: "Compiled wav files"
