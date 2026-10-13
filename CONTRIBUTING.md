@@ -56,7 +56,7 @@ ______________________________________________________________________
 - Every module under `modules/` imports nothing but `std`, neither `lightmix` nor another module. `build.zig` creates each module with no `imports`, so a forbidden `@import` fails to compile.
 - A module that needs another module's type receives it as a comptime parameter.
 - Modules exchange values and plain slices only. No module returns or accepts `lightmix.Wave`.
-- `src/root.zig` is the only place that imports `lightmix` and the modules.
+- The piece's module, rooted at `src/root.zig`, is the only module that imports `lightmix` and the modules. The boundary is per module, not per file: every file under `src/` belongs to that module.
 - Each module has its own tests, run by `zig build test` without the others.
 - No hidden global state: anything random takes an explicitly seeded generator.
 

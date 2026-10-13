@@ -12,7 +12,7 @@ ______________________________________________________________________
 - **Development Environment**: Managed with Nix, `direnv`, and `nix-direnv` for automated environment isolation. Formatting across all languages is handled via `treefmt`.
 - **Target Language Version**: Zig `0.16.0`. Avoid unnecessary external dependencies to maintain seamless cross-compilation.
 - **Modular Directory Structure**:
-  - `src/root.zig`: Main music composition and build-time generation entry point. The only file that imports `lightmix` and the modules: it writes the primitives, the scores and the instrument set, connects the modules, and wraps the final array in `lightmix.Wave`.
+  - `src/root.zig`: Main music composition and build-time generation entry point, and the root of the piece's module (`src/`), the only module that imports `lightmix` and the modules. It writes the primitives, the scores and the instrument set, connects the modules, and wraps the final array in `lightmix.Wave`.
   - `src/configs.zig`: Song-wide constants (`BPM`, meter, `SAMPLE_RATE`, `CHANNELS`, `PEAK`) and the sample type `T`.
   - `modules/`: One module per role of haruki7049/lightmix#413: `pitch` (pitch), `score` (score information), `body` (the rule of a vibrating body), `perform` (the procedure that turns values into waveforms), `mix` (place and mix), `timbre` (ready-made timbres). Every module imports nothing but `std`; `build.zig` creates them with no `imports`. A module that needs another module's type receives it as a comptime parameter, and modules exchange values and plain slices only, never `lightmix.Wave`.
   - `sandbox/`: Prototyping directory for testing synthesizers and scales independently. Not created yet; the `zig build sandbox` step in `build.zig` has no entries enabled.
