@@ -1,8 +1,8 @@
 //! gallop: about one minute of rock built on one gallop rhythm (an eighth and two sixteenths).
 //!
-//! This is the user's side of the roles, and the only file that imports `lightmix` and the
-//! modules. It writes the primitives, the score of every vibrating body and the instrument set,
-//! connects the modules, and wraps the final array in `lightmix.Wave`:
+//! This is the user's side of the roles, and the root of the only module that imports `lightmix`
+//! and the modules. It writes the primitives, the score of every vibrating body and the
+//! instrument set, connects the modules, and wraps the final array in `lightmix.Wave`:
 //!
 //!     scores, one per vibrating body       write, compose, resolve       score
 //!     resolved notes -> start and length   how long a note sounds        instrument set (here)
