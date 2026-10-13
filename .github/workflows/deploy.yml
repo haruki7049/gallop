@@ -1,0 +1,25 @@
+name: Build and deploy Wav files
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v7.0.1
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31.11.0
+      - name: nix build
+        run: nix build --print-build-logs
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@2.11.5
+        with:
+          file: result/share/coffee-chan.wav
+          file_glob: true
+          tag: ${{ github.ref }}
+          body: "Compiled wav files"
