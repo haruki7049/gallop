@@ -7,6 +7,7 @@ pub fn inner(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        /// Allocator of `samples`.
         allocator: std.mem.Allocator,
         /// Channels of the mix: 1 (mono) or 2 (stereo, left first).
         channels: u16,
@@ -37,6 +38,7 @@ pub fn inner(comptime T: type) type {
 
         /// A channel strip: every waveform added through it gets the same gain and pan.
         pub const Bus = struct {
+            /// The mix the waveforms are added to.
             mixer: *Self,
             /// Linear gain.
             gain: T,
@@ -46,7 +48,9 @@ pub fn inner(comptime T: type) type {
 
             /// Options of `bus`.
             pub const Options = struct {
+                /// Linear gain; 1 leaves the level as it is.
                 gain: T = 1.0,
+                /// Stereo position from -1 (left) to 1 (right); 0 is the center.
                 pan: T = 0.0,
             };
 
