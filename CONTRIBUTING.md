@@ -9,7 +9,7 @@ ______________________________________________________________________
 `gallop` is a deterministic music generation project built using Zig `0.16.0` and the [`lightmix`](https://github.com/haruki7049/lightmix) audio synthesis library. It produces a piece of music about one minute long, based on a gallop rhythm, with a timbre planned to be rock-styled.
 
 - **Deterministic Music Generation**: Running build steps generates `.wav` audio files directly during the build process without real-time recording.
-- **Modular Audio Architecture**: Code is to be structured into reusable modules under `modules/` and integrated in `src/root.zig`. The modules have not been created yet and will be organized as they are added.
+- **Modular Audio Architecture**: Code is structured into reusable modules under `modules/`, one per role, and connected in `src/root.zig`. See [Module Boundaries](#module-boundaries).
 - **Sandbox Environment**: Experimental synthesizers, scales, and audio prototypes reside in `sandbox/`.
 
 ______________________________________________________________________
@@ -41,9 +41,24 @@ ______________________________________________________________________
 ## 3. Repository Structure
 
 - `src/`: Main entry point (`root.zig`) for composing the full track, and song-wide constants (`configs.zig`).
-- `modules/`: Reusable audio synthesis building blocks (not created yet).
+- `modules/`: Reusable building blocks, one module per role:
+  - `pitch/`: Pitch names, transposition and tuning.
+  - `score/`: Score information: primitives, zip, concatenation, resolution to values.
+  - `body/`: The rule of a vibrating body: decides the approximation fade from starts and lengths.
+  - `perform/`: The procedure that turns values into waveforms, and the instrument-set type.
+  - `mix/`: Place and mix: applies the approximation fade, places and mixes waveforms.
+  - `timbre/`: Ready-made timbres that return plain sample arrays.
 - `sandbox/`: Experimental scripts for audio prototyping (not created yet).
 - `.github/workflows/`: CI/CD automation workflows.
+
+### Module Boundaries
+
+- Every module under `modules/` imports nothing but `std`, neither `lightmix` nor another module. `build.zig` creates each module with no `imports`, so a forbidden `@import` fails to compile.
+- A module that needs another module's type receives it as a comptime parameter.
+- Modules exchange values and plain slices only. No module returns or accepts `lightmix.Wave`.
+- `src/root.zig` is the only place that imports `lightmix` and the modules.
+- Each module has its own tests, run by `zig build test` without the others.
+- No hidden global state: anything random takes an explicitly seeded generator.
 
 ______________________________________________________________________
 
