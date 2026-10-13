@@ -1,21 +1,47 @@
 const std = @import("std");
 const l = @import("lightmix");
 
+/// The modules under `modules/`, one per role. Each is created with no `imports`, so it can
+/// import nothing but `std`: an `@import` of `lightmix` or of another module fails to compile.
+const module_names = [_][]const u8{
+    "pitch", // Pitch
+    "score", // Score information
+    "body", // The rule of a vibrating body
+    "perform", // The procedure that turns values into waveforms
+    "mix", // Place and mix
+    "timbre", // Ready-made timbres
+};
+
 pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
     const lightmix = b.dependency("lightmix", .{});
+    const lightmix_import: std.Build.Module.Import = .{ .name = "lightmix", .module = lightmix.module("lightmix") };
 
-    // Modules
-    const imports: []const std.Build.Module.Import = &.{
-        .{ .name = "lightmix", .module = lightmix.module("lightmix") },
-    };
+    const test_step = b.step("test", "Run tests");
+
+    // Modules: no imports. Each runs its own tests, without the others.
+    var imports: std.ArrayList(std.Build.Module.Import) = .empty;
+    try imports.append(b.allocator, lightmix_import);
+    for (module_names) |name| {
+        const module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("modules/{s}/root.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        });
+        try imports.append(b.allocator, .{ .name = name, .module = module });
+
+        const module_tests = b.addTest(.{ .name = name, .root_module = module });
+        test_step.dependOn(&b.addRunArtifact(module_tests).step);
+    }
+
+    // The piece: the only module that imports `lightmix` and the modules.
     const mod = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
-        .imports = imports,
+        .imports = imports.items,
     });
 
     // Wave file installation
@@ -33,19 +59,16 @@ pub fn build(b: *std.Build) !void {
     const play = try l.addPlay(b, wave, .{});
     play_step.dependOn(&play.step);
 
-    // Tests
+    // Tests of the piece
     const mod_tests = b.addTest(.{
+        .name = "gallop",
         .root_module = mod,
     });
-    const run_mod_tests = b.addRunArtifact(mod_tests);
-
-    // Test step
-    const test_step = b.step("test", "Run tests");
-    test_step.dependOn(&run_mod_tests.step);
+    test_step.dependOn(&b.addRunArtifact(mod_tests).step);
 
     // Sandbox
     const sandbox_step = b.step("sandbox", "Generate wav files on sandbox");
-    try build_sandbox(b, target, optimize, imports, sandbox_step);
+    try build_sandbox(b, target, optimize, &.{lightmix_import}, sandbox_step);
 }
 
 fn build_sandbox(
