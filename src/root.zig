@@ -1,8 +1,9 @@
 //! gallop: about one minute of rock built on one gallop rhythm (an eighth and two sixteenths).
 //!
 //! This is the user's side of the roles, and the root of the only module that imports `lightmix`
-//! and the modules. It writes the primitives, the score of every vibrating body and the
-//! instrument set, connects the modules, and wraps the final array in `lightmix.Wave`:
+//! and the modules. It writes the score of every vibrating body and the instrument set on the
+//! primitives of `primitives.zig`, connects the modules, and wraps the final array in
+//! `lightmix.Wave`:
 //!
 //!     scores, one per vibrating body       write, compose, resolve       score
 //!     resolved notes -> start and length   how long a note sounds        instrument set (here)
@@ -25,89 +26,26 @@
 
 const std = @import("std");
 const lightmix = @import("lightmix");
-const pitch = @import("pitch");
 const score = @import("score");
 const body = @import("body");
 const perform = @import("perform");
 const mix = @import("mix");
 const timbre = @import("timbre");
 const configs = @import("./configs.zig");
+const primitives = @import("./primitives.zig");
 
 const T = configs.T;
+const Pitch = primitives.Pitch;
+const Volume = primitives.Volume;
+const Mute = primitives.Mute;
+const Stroke = primitives.Stroke;
+const Transpose = primitives.Transpose;
 
 /// Tempo, meter and sample rate every primitive resolves against.
 const context: score.Context = .{
     .bpm = configs.BPM,
     .time_signature = .{ .numerator = configs.BEATS_PER_BAR, .denominator = configs.BEAT_VALUE },
     .sample_rate = configs.SAMPLE_RATE,
-};
-
-// ---------------------------------------------------------------------------------------------
-// Primitives. Timing and duration are the score module's defaults; these are the others.
-// ---------------------------------------------------------------------------------------------
-
-/// Twelve-tone equal temperament at A4 = 440 Hz.
-const tuning: pitch.TwelveToneEqualTemperament = .{};
-
-/// A pitch name, resolved to Hz with `tuning`. The name and the tuning stay apart in the pitch
-/// module; this primitive puts the tuning in the type.
-const Pitch = struct {
-    name: pitch.TwelveTonePitch,
-
-    pub const ResolveT = T;
-
-    pub fn resolve(self: Pitch, ctx: score.Context) ResolveT {
-        _ = ctx;
-        return tuning.freq(self.name);
-    }
-};
-
-/// The energy given to a vibrating body. Zero is a rest: the note does not sound.
-const Volume = struct {
-    value: T,
-
-    pub const ResolveT = T;
-
-    pub fn resolve(self: Volume, ctx: score.Context) ResolveT {
-        _ = ctx;
-        return self.value;
-    }
-};
-
-/// How far the palm mutes a guitar string, from 0 (open) to 1 (fully muted).
-const Mute = struct {
-    amount: T,
-
-    pub const ResolveT = T;
-
-    pub fn resolve(self: Mute, ctx: score.Context) ResolveT {
-        _ = ctx;
-        return self.amount;
-    }
-};
-
-/// How the hi-hat is struck. Closed and open are one vibrating body, so a closed hit chokes an
-/// open one that is still ringing.
-const Stroke = enum {
-    closed,
-    open,
-
-    pub const ResolveT = Stroke;
-
-    pub fn resolve(self: Stroke, ctx: score.Context) ResolveT {
-        _ = ctx;
-        return self;
-    }
-};
-
-/// Moves a pitch by a number of semitones. A transformation of score information, written next
-/// to the primitive it understands and applied with `Layer.map`.
-const Transpose = struct {
-    semitones: isize,
-
-    pub fn apply(self: Transpose, from: Pitch) error{PitchOutOfRange}!Pitch {
-        return .{ .name = try from.name.add(self.semitones) };
-    }
 };
 
 // ---------------------------------------------------------------------------------------------
