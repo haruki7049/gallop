@@ -40,7 +40,7 @@ ______________________________________________________________________
 
 ## 3. Repository Structure
 
-- `src/`: Main entry point (`root.zig`) for composing the full track, the primitives of the piece (`primitives.zig`), the scores (`scores.zig`), and song-wide constants (`configs.zig`).
+- `src/`: Main entry point (`root.zig`) for composing the full track, the primitives of the piece (`primitives.zig`), the scores (`scores.zig`), the instrument set (`instruments.zig`), and song-wide constants (`configs.zig`).
 - `modules/`: Reusable building blocks, one module per role:
   - `pitch/`: Pitch names, transposition and tuning.
   - `score/`: Score information: primitives, zip, concatenation, resolution to values.
