@@ -6,6 +6,7 @@ pub const BPM: usize = 140;
 pub const BEATS_PER_BAR: usize = 4;
 /// Note value of one beat (4/4).
 pub const BEAT_VALUE: usize = 4;
+/// Sample rate in Hz, of the synthesis and of the output file.
 pub const SAMPLE_RATE: u32 = 44100;
 /// Stereo.
 pub const CHANNELS: u16 = 2;

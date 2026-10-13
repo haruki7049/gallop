@@ -63,12 +63,19 @@ pub fn Biquad(comptime T: type) type {
     return struct {
         const Self = @This();
 
+        /// Feedforward coefficient of the current input, normalized by `a0`.
         b0: T,
+        /// Feedforward coefficient of the input one sample back, normalized by `a0`.
         b1: T,
+        /// Feedforward coefficient of the input two samples back, normalized by `a0`.
         b2: T,
+        /// Feedback coefficient of the output one sample back, normalized by `a0`.
         a1: T,
+        /// Feedback coefficient of the output two samples back, normalized by `a0`.
         a2: T,
+        /// First state of the transposed direct form II.
         z1: T = 0.0,
+        /// Second state of the transposed direct form II.
         z2: T = 0.0,
 
         /// Kind of response.

@@ -19,9 +19,13 @@ pub fn Procedure(comptime R: type) type {
     return perform.Procedure(T, R, body, .timing);
 }
 
+/// A resolved note of a drum: `timing` and `duration` in frames, and `volume`.
 const Hit = Hits.Resolved;
+/// A resolved note of the hi-hat: a drum note and its `stroke`.
 const HiHatNote = HiHat.Resolved;
+/// A resolved note of the bass: a drum note and its `pitch` in Hz.
 const BassNote = BassLine.Resolved;
+/// A resolved note of a guitar string: a bass note and its palm `mute`.
 const GuitarNote = GuitarLine.Resolved;
 
 /// Seconds to frames.
@@ -40,39 +44,53 @@ fn drumLength(seconds: T, volume: T) usize {
     return if (volume > 0.0) toFrames(seconds) else 0;
 }
 
+/// The kick, with a shorter decay than the default, so it has died away by the end of its 0.55 s.
 const kick_timbre: timbre.Kick(T) = .{ .decay = 0.17 };
+/// The snare with its default settings.
 const snare_timbre: timbre.Snare(T) = .{};
+/// The cymbals; the closed and open hi-hat and the crash are its settings.
 const Cymbal = timbre.Cymbal(T);
+/// The bass with its default settings.
 const bass_timbre: timbre.Bass(T) = .{};
+/// The left guitar.
 const left_guitar: timbre.Guitar(T) = .{ .detune = 6.0 };
+/// The right guitar: more detune and drive and a darker cabinet than the left one, so the
+/// two sides differ.
 const right_guitar: timbre.Guitar(T) = .{ .detune = 9.0, .drive = 10.0, .cabinet = 3900.0 };
 
+/// A kick rings for 0.55 s.
 fn kickLength(note: Hit) usize {
     return drumLength(0.55, note.volume);
 }
 
+/// Sounds a kick at the volume of the note.
 fn kickTimbre(allocator: std.mem.Allocator, note: Hit, length: usize, frames: usize) anyerror![]T {
     return kick_timbre.render(allocator, configs.SAMPLE_RATE, note.volume, length, frames);
 }
 
+/// A snare rings for 0.5 s.
 fn snareLength(note: Hit) usize {
     return drumLength(0.5, note.volume);
 }
 
+/// Sounds a snare at the volume of the note, with noise seeded by where the note starts.
 fn snareTimbre(allocator: std.mem.Allocator, note: Hit, length: usize, frames: usize) anyerror![]T {
     var prng = seeded(0x5a4e_0001, note.timing);
     return snare_timbre.render(allocator, prng.random(), configs.SAMPLE_RATE, note.volume, length, frames);
 }
 
+/// A crash rings for 4 s, past the end of the piece on the final chord.
 fn crashLength(note: Hit) usize {
     return drumLength(4.0, note.volume);
 }
 
+/// Sounds a crash at the volume of the note, with noise seeded by where the note starts.
 fn crashTimbre(allocator: std.mem.Allocator, note: Hit, length: usize, frames: usize) anyerror![]T {
     var prng = seeded(0xc4a5_0002, note.timing);
     return Cymbal.crash.render(allocator, prng.random(), configs.SAMPLE_RATE, note.volume, length, frames);
 }
 
+/// A closed hi-hat rings for 0.15 s and an open one for 1 s, unless the next hit cuts it.
 fn hihatLength(note: HiHatNote) usize {
     return switch (note.stroke) {
         .closed => drumLength(0.15, note.volume),
@@ -80,6 +98,8 @@ fn hihatLength(note: HiHatNote) usize {
     };
 }
 
+/// Sounds the closed or the open hi-hat by the stroke of the note, with noise seeded by where
+/// the note starts.
 fn hihatTimbre(allocator: std.mem.Allocator, note: HiHatNote, length: usize, frames: usize) anyerror![]T {
     var prng = seeded(0x4a7_0003, note.timing);
     const cymbal = switch (note.stroke) {
@@ -95,6 +115,7 @@ fn bassLength(note: BassNote) usize {
     return note.duration - note.duration / 20;
 }
 
+/// Sounds the bass at the pitch and volume of the note.
 fn bassTimbre(allocator: std.mem.Allocator, note: BassNote, length: usize, frames: usize) anyerror![]T {
     return bass_timbre.render(allocator, configs.SAMPLE_RATE, note.pitch, note.volume, length, frames);
 }
@@ -106,19 +127,25 @@ fn guitarLength(note: GuitarNote) usize {
     return @intFromFloat(@round(@as(T, @floatFromInt(note.duration)) * held));
 }
 
+/// Sounds the left guitar at the pitch, palm muting and volume of the note.
 fn leftGuitarTimbre(allocator: std.mem.Allocator, note: GuitarNote, length: usize, frames: usize) anyerror![]T {
     return left_guitar.render(allocator, configs.SAMPLE_RATE, note.pitch, note.mute, note.volume, length, frames);
 }
 
+/// Sounds the right guitar at the pitch, palm muting and volume of the note.
 fn rightGuitarTimbre(allocator: std.mem.Allocator, note: GuitarNote, length: usize, frames: usize) anyerror![]T {
     return right_guitar.render(allocator, configs.SAMPLE_RATE, note.pitch, note.mute, note.volume, length, frames);
 }
 
+/// The kick drum.
 pub const kick_body: Procedure(Hit).Body = .{ .length = kickLength, .timbre = kickTimbre };
+/// The snare drum.
 pub const snare_body: Procedure(Hit).Body = .{ .length = snareLength, .timbre = snareTimbre };
+/// The crash cymbal.
 pub const crash_body: Procedure(Hit).Body = .{ .length = crashLength, .timbre = crashTimbre };
 /// The closed and the open hi-hat: one body.
 pub const hihat_body: Procedure(HiHatNote).Body = .{ .length = hihatLength, .timbre = hihatTimbre };
+/// The bass, one vibrating body: it sounds one note at a time.
 pub const bass_body: Procedure(BassNote).Body = .{ .length = bassLength, .timbre = bassTimbre };
 /// One string of the left guitar; the root and the fifth are two such bodies.
 pub const left_string: Procedure(GuitarNote).Body = .{ .length = guitarLength, .timbre = leftGuitarTimbre };
