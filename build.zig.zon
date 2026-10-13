@@ -1,0 +1,22 @@
+.{
+    .name = .gallop,
+    .version = "0.0.0",
+    .fingerprint = 0x823cbc17e38e4780, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.16.0",
+
+    .dependencies = .{
+        .lightmix = .{
+            .url = "https://github.com/haruki7049/lightmix/archive/refs/tags/0.26.0.tar.gz",
+            .hash = "lightmix-0.26.0-SpCovCZcBQBv6Mc5F-Jb99lcspkm-5Bo3m3nowSHKoW3",
+        },
+    },
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "README.md",
+    },
+}
