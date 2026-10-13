@@ -1,20 +1,21 @@
-# Agent Guidelines for `coffee-chan`
+# Agent Guidelines for `gallop`
 
-This document defines core principles, architectural invariants, and non-negotiable safety rules for AI agents working on the `coffee-chan` repository.
+This document defines core principles, architectural invariants, and non-negotiable safety rules for AI agents working on the `gallop` repository.
 
 ______________________________________________________________________
 
 ## 1. Project Overview & Architecture
 
-`coffee-chan` is a cafe music generation project built with the [`lightmix`](https://github.com/haruki7049/lightmix) audio synthesis library in Zig.
+`gallop` is a piece of music about one minute long, based on a gallop rhythm, built with the [`lightmix`](https://github.com/haruki7049/lightmix) audio synthesis library in Zig. Its timbre is planned to be rock-styled.
 
-- **Deterministic Generation**: Music generation is treated as a deterministic build artifact. Running `zig build` produces `coffee-chan.wav` directly during the build.
+- **Deterministic Generation**: Music generation is treated as a deterministic build artifact. Running `zig build` produces `gallop.wav` directly during the build.
 - **Development Environment**: Managed with Nix, `direnv`, and `nix-direnv` for automated environment isolation. Formatting across all languages is handled via `treefmt`.
 - **Target Language Version**: Zig `0.16.0`. Avoid unnecessary external dependencies to maintain seamless cross-compilation.
 - **Modular Directory Structure**:
   - `src/root.zig`: Main music composition and build-time generation entry point.
-  - `modules/`: Reusable audio modules (`filters`, `synthesizers`, `music`, `sequencer`, `phrases`, `banks`); see the Module Layering section of `CONTRIBUTING.md`.
-  - `sandbox/`: Prototyping directory for testing synthesizers and scales independently.
+  - `src/configs.zig`: Song-wide constants (`BPM`, `SAMPLE_RATE`, `CHANNELS`) and the sample type `T`.
+  - `modules/`: Reusable audio modules. Not created yet; the modules and their layering will be organized as they are added.
+  - `sandbox/`: Prototyping directory for testing synthesizers and scales independently. Not created yet; the `zig build sandbox` step in `build.zig` has no entries enabled.
   - `build.zig` & `build.zig.zon`: Build definition and package metadata.
 
 ______________________________________________________________________
@@ -31,7 +32,6 @@ ______________________________________________________________________
 - **Targeted Edits**: Make minimal, logical changes strictly necessary for the request. Do not modify unrelated files.
 - **English-Only Documentation**: All repository documentation, agent skills, code comments, commit messages, and PR descriptions must be written strictly in English. Never include Japanese or any non-English language in repository documentation or skill files.
 - **Naming Conventions**: Follow repository naming standards defined in [`docs/NAMING.md`](docs/NAMING.md). In particular, comptime type parameters must always be a single uppercase character (e.g., `comptime T: type`), and functions/methods must use concise verb-only names when context is evident (e.g., `Track.add` rather than `Track.addWave`).
-- **GitHub Projects Operations**: When updating GitHub Projects via `gh project item-edit`, always inspect schemas (`gh project field-list`) first rather than assuming field names or values. Update only one field per invocation, as passing multiple `--field` flags silently overwrites previous flags. See [`github-projects`](.agents/skills/github-projects/SKILL.md).
 - **Explicit Milestone Assignment Only**: AI agents **MUST NEVER** automatically attach or set GitHub Milestones on Pull Requests or Issues unless explicitly requested or instructed by the user.
 - **No Session Links**: Do not include AI session URLs or other internal session identifiers (e.g. a `Claude-Session:` trailer) in commit messages, PR descriptions, issues, or comments. Such links are not accessible from outside the private session, so publishing them in this public repository serves no purpose and only confuses readers. A `Co-Authored-By:` trailer is fine. Exception: if the user explicitly states the session is public and instructs the agent to include its URL, doing so is allowed.
 
@@ -51,7 +51,7 @@ ______________________________________________________________________
 
 ## 4. Workspace Skills
 
-Detailed runbooks and procedural workflows are maintained as workspace skills under `.agents/skills/` (and accessible via `.opencode/skills/`):
+Detailed runbooks and procedural workflows are maintained as workspace skills under `.agents/skills/`:
 
 | Trigger / Context | Skill to Read | Purpose |
 | :--- | :--- | :--- |
@@ -60,5 +60,4 @@ Detailed runbooks and procedural workflows are maintained as workspace skills un
 | Deleting files, overwriting, git push/reset | [`irreversible`](.agents/skills/irreversible/SKILL.md) | Pre-checks and confirmation prompts |
 | Testing, verifying builds or behavior | [`verify`](.agents/skills/verify/SKILL.md) | Minimal, high-signal verification steps |
 | Bumping `lightmix` or `zon2nix` | [`update-dependencies`](.agents/skills/update-dependencies/SKILL.md) | Procedures for dependency updates and `.deps.nix` |
-| Updating GitHub Projects fields, issues/PRs | [`github-projects`](.agents/skills/github-projects/SKILL.md) | Procedures, caveats (single-field updates), and schema validation for Projects v2 |
 | Preparing PRs, formatting, pre-submission checks | [`pr-workflow`](.agents/skills/pr-workflow/SKILL.md) | Verification command table, commit rules, and PR requirements |

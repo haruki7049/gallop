@@ -5,7 +5,7 @@ description: Repository commit conventions and prohibition on unprompted commit/
 
 # Git Commit Policy & Conventions
 
-Read this to understand the commit policy and message conventions for `coffee-chan`.
+Read this to understand the commit policy and message conventions for `gallop`.
 
 ## Prohibition on Unprompted Commit/Push Proposals
 
