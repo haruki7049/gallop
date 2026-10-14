@@ -1,4 +1,4 @@
-//! Layers of score information: named primitives, zip, concatenation and resolution.
+//! Layers of score information: named primitives, notation, zip, concatenation and resolution.
 //!
 //! A primitive is any type with exactly two declarations, `ResolveT` and
 //! `resolve(self, ctx: Context) ResolveT` (or an error union of `ResolveT`). `Layer` builds a layer
@@ -10,10 +10,10 @@
 //! the origins of its elements, and `resolve` hands each element its origin through
 //! `Context.origin`. A primitive that places itself in time adds the origin; the others ignore it.
 //!
-//! Memory: zip borrows the slices of both layers, and allocates only to broadcast a layer of one
-//! element. Concatenation, `repeat`, `map` and `resolve` allocate new slices with the allocator they
-//! are given and never free their inputs, so a score is meant to be built with an arena and freed
-//! at once.
+//! Memory: `notate` borrows the values it is given. Zip borrows the slices of both layers, and
+//! allocates only to broadcast a layer of one element. Concatenation (`concat`, `join`, `repeat`),
+//! `map` and `resolve` allocate new slices with the allocator they are given and never free their
+//! inputs, so a score is meant to be built with an arena and freed at once.
 
 const std = @import("std");
 const Context = @import("./context.zig");
@@ -137,6 +137,16 @@ fn LayerOf(comptime E: type) type {
             return result;
         }
 
+        /// A layer of `values` that is not placed in time, for a layer type of one primitive.
+        /// Allocates nothing and borrows `values`. A layer of several primitives is written by
+        /// zipping layers of one.
+        pub fn notate(values: []const fields[0].type) Self {
+            comptime if (fields.len != 1) @compileError("notate needs a layer of one primitive; zip layers of one instead");
+            var result: Self = .{ .columns = undefined };
+            @field(result.columns, fields[0].name) = values;
+            return result;
+        }
+
         /// Number of elements.
         pub fn count(self: Self) usize {
             return @field(self.columns, fields[0].name).len;
@@ -222,28 +232,65 @@ fn LayerOf(comptime E: type) type {
         /// beats after this layer starts. The result lasts both extents. The caller owns the
         /// returned slices.
         pub fn concat(self: Self, allocator: std.mem.Allocator, other: Self) std.mem.Allocator.Error!Self {
-            var result: Self = .{ .columns = undefined, .extent = self.extent + other.extent };
-            inline for (fields) |field| {
-                @field(result.columns, field.name) = try std.mem.concat(allocator, field.type, &.{
-                    @field(self.columns, field.name),
-                    @field(other.columns, field.name),
-                });
-            }
+            return place(allocator, &.{ self, other }, 1);
+        }
 
-            if (self.origins.len == 0 and other.origins.len == 0 and self.extent == 0.0) return result;
-
-            const origins = try allocator.alloc(f64, self.count() + other.count());
-            for (0..self.count()) |i| origins[i] = originAt(self.origins, i);
-            for (0..other.count()) |i| origins[self.count() + i] = self.extent + originAt(other.origins, i);
-            result.origins = origins;
-            return result;
+        /// Concatenates `parts` in order: each part starts where the extents of the parts before
+        /// it end. No parts gives an empty layer that lasts no time. Allocates each slice once,
+        /// whatever the number of parts. The caller owns the returned slices.
+        pub fn join(allocator: std.mem.Allocator, parts: []const Self) std.mem.Allocator.Error!Self {
+            return place(allocator, parts, 1);
         }
 
         /// Concatenates this layer with itself until it appears `times` times. Zero times gives an
-        /// empty layer that lasts no time. The caller owns the returned slices.
+        /// empty layer that lasts no time. Allocates each slice once. The caller owns the returned
+        /// slices.
         pub fn repeat(self: Self, allocator: std.mem.Allocator, times: usize) std.mem.Allocator.Error!Self {
-            var result = empty(0.0);
-            for (0..times) |_| result = try result.concat(allocator, self);
+            return place(allocator, &.{self}, times);
+        }
+
+        /// Concatenates `parts` in order, the whole sequence `times` times over. The result is the
+        /// one that concatenating them one by one from an empty layer would give, down to the bits
+        /// of the extent and the origins, but every slice is allocated once.
+        fn place(allocator: std.mem.Allocator, parts: []const Self, times: usize) std.mem.Allocator.Error!Self {
+            // Concatenation gives origins once a part has origins or starts after zero beats.
+            var total: usize = 0;
+            var extent: f64 = 0.0;
+            var timed = false;
+            for (0..times) |_| {
+                for (parts) |part| {
+                    if (part.origins.len != 0 or extent != 0.0) timed = true;
+                    total += part.count();
+                    extent += part.extent;
+                }
+            }
+
+            var result: Self = .{ .columns = undefined, .extent = extent };
+            inline for (fields) |field| {
+                const column = try allocator.alloc(field.type, total);
+                var at: usize = 0;
+                for (0..times) |_| {
+                    for (parts) |part| {
+                        const values = @field(part.columns, field.name);
+                        @memcpy(column[at..][0..values.len], values);
+                        at += values.len;
+                    }
+                }
+                @field(result.columns, field.name) = column;
+            }
+            if (!timed) return result;
+
+            const origins = try allocator.alloc(f64, total);
+            var at: usize = 0;
+            var start: f64 = 0.0;
+            for (0..times) |_| {
+                for (parts) |part| {
+                    for (0..part.count()) |i| origins[at + i] = start + originAt(part.origins, i);
+                    at += part.count();
+                    start += part.extent;
+                }
+            }
+            result.origins = origins;
             return result;
         }
 
@@ -569,6 +616,83 @@ test "repeat concatenates a layer with itself" {
     const none = try cell.repeat(allocator, 0);
     try std.testing.expectEqual(@as(usize, 0), none.count());
     try std.testing.expectEqual(@as(f64, 0.0), none.extent);
+}
+
+test "notate borrows values into a layer not placed in time" {
+    const values = [_]Pitch{ .{ .semitones = 0 }, .{ .semitones = 7 } };
+    const notes = inner(.{ .pitch = Pitch }).notate(&values);
+    try std.testing.expectEqual(@as([*]const Pitch, &values), notes.columns.pitch.ptr);
+    try std.testing.expectEqual(@as(usize, 2), notes.count());
+    try std.testing.expectEqual(@as(f64, 0.0), notes.extent);
+    try std.testing.expectEqual(@as(usize, 0), notes.origins.len);
+}
+
+test "join gives what concatenating the parts one by one gives" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const Rhythm = inner(.{ .timing = Timing });
+    const loose: Rhythm = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 0.5 } } } };
+    const triplet: Rhythm = .{ .columns = .{ .timing = &.{.{}} }, .extent = 1.0 / 3.0 };
+    const late: Rhythm = .{ .columns = .{ .timing = &.{ .{}, .{} } }, .extent = 2.0, .origins = &.{ 0.0, 0.5 } };
+    const parts = [_]Rhythm{ loose, triplet, triplet, late, Rhythm.empty(1.0), triplet };
+
+    var folded = Rhythm.empty(0.0);
+    for (parts) |part| folded = try folded.concat(allocator, part);
+    try std.testing.expectEqualDeep(folded, try Rhythm.join(allocator, &parts));
+
+    // Layers that are not placed in time stay that way.
+    const appended = try Rhythm.join(allocator, &.{ loose, loose });
+    try std.testing.expectEqual(@as(usize, 4), appended.count());
+    try std.testing.expectEqual(@as(usize, 0), appended.origins.len);
+
+    // No parts give an empty layer that lasts no time.
+    const none = try Rhythm.join(allocator, &.{});
+    try std.testing.expectEqual(@as(usize, 0), none.count());
+    try std.testing.expectEqual(@as(f64, 0.0), none.extent);
+}
+
+test "join adds the extents from left to right" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const Rhythm = inner(.{ .timing = Timing });
+    const triplet: Rhythm = .{ .columns = .{ .timing = &.{.{}} }, .extent = 1.0 / 3.0 };
+
+    var extent: f64 = 0.0;
+    var origins: [10]f64 = undefined;
+    for (&origins) |*origin| {
+        origin.* = extent;
+        extent += triplet.extent;
+    }
+    const ten = try triplet.repeat(allocator, 10);
+    try std.testing.expectEqual(extent, ten.extent);
+    try std.testing.expectEqualSlices(f64, &origins, ten.origins);
+}
+
+test "join and repeat allocate each slice once" {
+    var counting: std.testing.FailingAllocator = .init(std.testing.allocator, .{});
+    const allocator = counting.allocator();
+
+    const Rhythm = inner(.{ .timing = Timing, .duration = Duration });
+    const gallop: Rhythm = .{
+        .columns = .{
+            .timing = &.{ .{ .beat = 0.0 }, .{ .beat = 0.5 }, .{ .beat = 0.75 } },
+            .duration = &.{ .{ .beats = 0.5 }, .{ .beats = 0.25 }, .{ .beats = 0.25 } },
+        },
+        .extent = 1.0,
+    };
+
+    // Two columns and the origins.
+    const bar = try gallop.repeat(allocator, 4);
+    defer inline for (.{ bar.columns.timing, bar.columns.duration, bar.origins }) |slice| allocator.free(slice);
+    try std.testing.expectEqual(@as(usize, 3), counting.allocations);
+
+    const phrase = try Rhythm.join(allocator, &.{ bar, gallop, bar, gallop });
+    defer inline for (.{ phrase.columns.timing, phrase.columns.duration, phrase.origins }) |slice| allocator.free(slice);
+    try std.testing.expectEqual(@as(usize, 6), counting.allocations);
 }
 
 test "map transforms one primitive and keeps the others" {

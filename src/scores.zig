@@ -76,11 +76,11 @@ const gallop_bars = intro_bars + 3 * verse_bars + climax_bars;
 /// E2: the root of the intro, of the first two bars of the riff, and of the final chord. Like
 /// every root, a layer of one pitch that is not placed in time, so that zip copies it onto
 /// every note of a rhythm.
-const e2: Pitches = .{ .columns = .{ .pitch = &.{.{ .name = .{ .code = .e, .octave = 2 } }} } };
+const e2 = Pitches.notate(&.{.{ .name = .{ .code = .e, .octave = 2 } }});
 /// C3: the root of the third bar of the riff.
-const c3: Pitches = .{ .columns = .{ .pitch = &.{.{ .name = .{ .code = .c, .octave = 3 } }} } };
+const c3 = Pitches.notate(&.{.{ .name = .{ .code = .c, .octave = 3 } }});
 /// D3: the root of the fourth bar of the riff.
-const d3: Pitches = .{ .columns = .{ .pitch = &.{.{ .name = .{ .code = .d, .octave = 3 } }} } };
+const d3 = Pitches.notate(&.{.{ .name = .{ .code = .d, .octave = 3 } }});
 
 /// One bar of volumes, written as four gallops of three notes each.
 fn bar(comptime gallops: [4][3]T) [12]Volume {
@@ -129,25 +129,6 @@ const chug_mute = [_]Mute{ .{ .amount = 0.55 }, .{ .amount = 0.9 }, .{ .amount =
 /// Palm muting of one gallop in the climax: more open than `chug_mute`.
 const climax_mute = [_]Mute{ .{ .amount = 0.3 }, .{ .amount = 0.7 }, .{ .amount = 0.7 } };
 
-/// The type of the only primitive of a one-primitive layer `L`.
-fn Column(comptime L: type) type {
-    return @FieldType(L.Item, @typeInfo(L.Item).@"struct".fields[0].name);
-}
-
-/// A layer of one primitive: `values` written once, repeated `times` times.
-fn pattern(comptime L: type, allocator: std.mem.Allocator, values: []const Column(L), times: usize) !L {
-    var once: L = .{ .columns = undefined };
-    @field(once.columns, @typeInfo(L.Item).@"struct".fields[0].name) = values;
-    return once.repeat(allocator, times);
-}
-
-/// Concatenates `parts` in order.
-fn join(comptime L: type, allocator: std.mem.Allocator, parts: []const L) !L {
-    var result = L.empty(0.0);
-    for (parts) |part| result = try result.concat(allocator, part);
-    return result;
-}
-
 /// The scores of every vibrating body.
 pub const Scores = struct {
     /// The kick drum.
@@ -176,14 +157,14 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
     // lift and the climax are transpositions of it. The melody follows the same gallops as the
     // timeline.
     const measure = try gallop.repeat(allocator, configs.BEATS_PER_BAR);
-    const riff = try join(Melody, allocator, &.{
+    const riff = try Melody.join(allocator, &.{
         try measure.zip(allocator, e2),
         try measure.zip(allocator, e2),
         try measure.zip(allocator, c3),
         try measure.zip(allocator, d3),
     });
     const verse = try riff.concat(allocator, riff);
-    const melody = try join(Melody, allocator, &.{
+    const melody = try Melody.join(allocator, &.{
         try (try measure.repeat(allocator, intro_bars)).zip(allocator, e2),
         verse,
         try verse.map(allocator, .pitch, Transpose{ .semitones = 5 }),
@@ -192,68 +173,68 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
         try ending.zip(allocator, e2),
     });
 
-    const kick = try join(Volumes, allocator, &.{
-        try pattern(Volumes, allocator, &silent_bar, 2),
-        try pattern(Volumes, allocator, &kick_four, intro_bars - 2),
-        try pattern(Volumes, allocator, &kick_verse, verse_bars),
-        try pattern(Volumes, allocator, &kick_drive, verse_bars),
-        try pattern(Volumes, allocator, &kick_verse, verse_bars),
-        try pattern(Volumes, allocator, &kick_drive, climax_bars),
-        try pattern(Volumes, allocator, &.{.{ .value = 1.0 }}, 1),
+    const kick = try Volumes.join(allocator, &.{
+        try Volumes.notate(&silent_bar).repeat(allocator, 2),
+        try Volumes.notate(&kick_four).repeat(allocator, intro_bars - 2),
+        try Volumes.notate(&kick_verse).repeat(allocator, verse_bars),
+        try Volumes.notate(&kick_drive).repeat(allocator, verse_bars),
+        try Volumes.notate(&kick_verse).repeat(allocator, verse_bars),
+        try Volumes.notate(&kick_drive).repeat(allocator, climax_bars),
+        Volumes.notate(&.{.{ .value = 1.0 }}),
     });
 
-    const snare_section = try (try pattern(Volumes, allocator, &snare_backbeat, verse_bars - 1)).concat(allocator, try pattern(Volumes, allocator, &snare_fill, 1));
-    const snare = try join(Volumes, allocator, &.{
-        try pattern(Volumes, allocator, &silent_bar, intro_bars - 1),
-        try pattern(Volumes, allocator, &snare_fill, 1),
+    const snare_section = try (try Volumes.notate(&snare_backbeat).repeat(allocator, verse_bars - 1)).concat(allocator, Volumes.notate(&snare_fill));
+    const snare = try Volumes.join(allocator, &.{
+        try Volumes.notate(&silent_bar).repeat(allocator, intro_bars - 1),
+        Volumes.notate(&snare_fill),
         snare_section,
         snare_section,
         snare_section,
-        try pattern(Volumes, allocator, &snare_backbeat, climax_bars - 1),
-        try pattern(Volumes, allocator, &snare_fill, 1),
-        try pattern(Volumes, allocator, &.{.{ .value = 0.9 }}, 1),
+        try Volumes.notate(&snare_backbeat).repeat(allocator, climax_bars - 1),
+        Volumes.notate(&snare_fill),
+        Volumes.notate(&.{.{ .value = 0.9 }}),
     });
 
-    const crash_section = try (try pattern(Volumes, allocator, &crash_first, 1)).concat(allocator, try pattern(Volumes, allocator, &silent_bar, verse_bars - 1));
-    const crash = try join(Volumes, allocator, &.{
-        try pattern(Volumes, allocator, &silent_bar, intro_bars),
+    const crash_section = try Volumes.notate(&crash_first).concat(allocator, try Volumes.notate(&silent_bar).repeat(allocator, verse_bars - 1));
+    const crash = try Volumes.join(allocator, &.{
+        try Volumes.notate(&silent_bar).repeat(allocator, intro_bars),
         crash_section,
         crash_section,
         crash_section,
-        try pattern(Volumes, allocator, &crash_first, climax_bars),
-        try pattern(Volumes, allocator, &.{.{ .value = 1.0 }}, 1),
+        try Volumes.notate(&crash_first).repeat(allocator, climax_bars),
+        Volumes.notate(&.{.{ .value = 1.0 }}),
     });
 
-    const hat_volume = try join(Volumes, allocator, &.{
-        try pattern(Volumes, allocator, &silent_bar, 2),
-        try pattern(Volumes, allocator, &hat_quarters, intro_bars - 2 + verse_bars),
-        try pattern(Volumes, allocator, &hat_lift, verse_bars / 2),
-        try pattern(Volumes, allocator, &hat_quarters, verse_bars),
-        try pattern(Volumes, allocator, &hat_lift, climax_bars / 2),
-        try pattern(Volumes, allocator, &.{.{ .value = 0.0 }}, 1),
+    const hat_volume = try Volumes.join(allocator, &.{
+        try Volumes.notate(&silent_bar).repeat(allocator, 2),
+        try Volumes.notate(&hat_quarters).repeat(allocator, intro_bars - 2 + verse_bars),
+        try Volumes.notate(&hat_lift).repeat(allocator, verse_bars / 2),
+        try Volumes.notate(&hat_quarters).repeat(allocator, verse_bars),
+        try Volumes.notate(&hat_lift).repeat(allocator, climax_bars / 2),
+        Volumes.notate(&.{.{ .value = 0.0 }}),
     });
-    const hat_stroke = try join(Strokes, allocator, &.{
-        try pattern(Strokes, allocator, &closed_bar, intro_bars + verse_bars),
-        try pattern(Strokes, allocator, &lift_strokes, verse_bars / 2),
-        try pattern(Strokes, allocator, &closed_bar, verse_bars),
-        try pattern(Strokes, allocator, &lift_strokes, climax_bars / 2),
-        try pattern(Strokes, allocator, &.{.closed}, 1),
-    });
-
-    const bass_volume = try join(Volumes, allocator, &.{
-        try pattern(Volumes, allocator, &silent_bar, 2),
-        try pattern(Volumes, allocator, &chug, gallop_bars - 2),
-        try pattern(Volumes, allocator, &.{.{ .value = 1.0 }}, 1),
+    const hat_stroke = try Strokes.join(allocator, &.{
+        try Strokes.notate(&closed_bar).repeat(allocator, intro_bars + verse_bars),
+        try Strokes.notate(&lift_strokes).repeat(allocator, verse_bars / 2),
+        try Strokes.notate(&closed_bar).repeat(allocator, verse_bars),
+        try Strokes.notate(&lift_strokes).repeat(allocator, climax_bars / 2),
+        Strokes.notate(&.{.closed}),
     });
 
-    const guitar_volume = try join(Volumes, allocator, &.{
-        try pattern(Volumes, allocator, &chug, gallop_bars),
-        try pattern(Volumes, allocator, &.{.{ .value = 1.0 }}, 1),
+    const bass_volume = try Volumes.join(allocator, &.{
+        try Volumes.notate(&silent_bar).repeat(allocator, 2),
+        try Volumes.notate(&chug).repeat(allocator, gallop_bars - 2),
+        Volumes.notate(&.{.{ .value = 1.0 }}),
     });
-    const guitar_mute = try join(Mutes, allocator, &.{
-        try pattern(Mutes, allocator, &chug_mute, (gallop_bars - climax_bars) * configs.BEATS_PER_BAR),
-        try pattern(Mutes, allocator, &climax_mute, climax_bars * configs.BEATS_PER_BAR),
-        try pattern(Mutes, allocator, &.{.{ .amount = 0.0 }}, 1),
+
+    const guitar_volume = try Volumes.join(allocator, &.{
+        try Volumes.notate(&chug).repeat(allocator, gallop_bars),
+        Volumes.notate(&.{.{ .value = 1.0 }}),
+    });
+    const guitar_mute = try Mutes.join(allocator, &.{
+        try Mutes.notate(&chug_mute).repeat(allocator, (gallop_bars - climax_bars) * configs.BEATS_PER_BAR),
+        try Mutes.notate(&climax_mute).repeat(allocator, climax_bars * configs.BEATS_PER_BAR),
+        Mutes.notate(&.{.{ .amount = 0.0 }}),
     });
 
     const guitar_root = try (try melody.zip(allocator, guitar_volume)).zip(allocator, guitar_mute);
