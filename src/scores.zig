@@ -249,13 +249,13 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
         try pattern(Mutes, allocator, &.{.{ .amount = 0.0 }}, 1),
     });
 
-    const guitar_root = try (try (try timeline.zip(guitar_volume)).zip(guitar_mute)).zip(roots);
+    const guitar_root = try (try (try timeline.zip(allocator, guitar_volume)).zip(allocator, guitar_mute)).zip(allocator, roots);
     return .{
-        .kick = try timeline.zip(kick),
-        .snare = try timeline.zip(snare),
-        .crash = try timeline.zip(crash),
-        .hihat = try (try timeline.zip(hat_volume)).zip(hat_stroke),
-        .bass = try (try timeline.zip(bass_volume)).zip(try roots.map(allocator, .pitch, Transpose{ .semitones = -12 })),
+        .kick = try timeline.zip(allocator, kick),
+        .snare = try timeline.zip(allocator, snare),
+        .crash = try timeline.zip(allocator, crash),
+        .hihat = try (try timeline.zip(allocator, hat_volume)).zip(allocator, hat_stroke),
+        .bass = try (try timeline.zip(allocator, bass_volume)).zip(allocator, try roots.map(allocator, .pitch, Transpose{ .semitones = -12 })),
         .guitar_root = guitar_root,
         // A power chord: the second string plays the root's score a fifth up.
         .guitar_fifth = try guitar_root.map(allocator, .pitch, Transpose{ .semitones = 7 }),

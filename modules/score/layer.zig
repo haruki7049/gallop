@@ -10,9 +10,10 @@
 //! the origins of its elements, and `resolve` hands each element its origin through
 //! `Context.origin`. A primitive that places itself in time adds the origin; the others ignore it.
 //!
-//! Memory: zip allocates nothing and borrows the slices of both layers. Concatenation, `repeat`,
-//! `map` and `resolve` allocate new slices with the allocator they are given and never free their
-//! inputs, so a score is meant to be built with an arena and freed at once.
+//! Memory: zip borrows the slices of both layers, and allocates only to broadcast a layer of one
+//! element. Concatenation, `repeat`, `map` and `resolve` allocate new slices with the allocator they
+//! are given and never free their inputs, so a score is meant to be built with an arena and freed
+//! at once.
 
 const std = @import("std");
 const Context = @import("./context.zig");
@@ -160,13 +161,39 @@ fn LayerOf(comptime E: type) type {
             return Sorted(all.len, names, types);
         }
 
-        /// Pairs this layer with another one, element by element. Allocates nothing.
+        /// Whether this layer is one element not placed in time, which `zip` broadcasts.
+        fn scalar(self: Self) bool {
+            return self.count() == 1 and !self.placed();
+        }
+
+        /// This layer's one element copied `n` times, in a layer not placed in time. Copies the
+        /// element without reading it. The caller owns the returned slices.
+        fn broadcast(self: Self, allocator: std.mem.Allocator, n: usize) std.mem.Allocator.Error!Self {
+            var result: Self = .{ .columns = undefined };
+            inline for (fields) |field| {
+                const column = try allocator.alloc(field.type, n);
+                @memset(column, @field(self.columns, field.name)[0]);
+                @field(result.columns, field.name) = column;
+            }
+            return result;
+        }
+
+        /// Pairs this layer with another one, element by element.
         ///
         /// Returns `error.MismatchedCount` when the numbers of elements differ, never truncating or
-        /// repeating. When only one layer is placed in time, the result takes its extent and
-        /// origins; when both are, they must agree, or `error.MismatchedExtent` is returned.
-        pub fn zip(self: Self, other: anytype) ZipError!Zipped(@TypeOf(other)) {
-            if (self.count() != other.count()) return error.MismatchedCount;
+        /// repeating, with one exception: a layer of one element that is not placed in time is
+        /// broadcast, its element copied onto every element of the other layer, on either side.
+        /// When only one layer is placed in time, the result takes its extent and origins; when
+        /// both are, they must agree, or `error.MismatchedExtent` is returned.
+        ///
+        /// Memory: borrows the slices of both layers. Only a broadcast allocates, with `allocator`,
+        /// the copies of the broadcast element; the caller owns them.
+        pub fn zip(self: Self, allocator: std.mem.Allocator, other: anytype) (ZipError || std.mem.Allocator.Error)!Zipped(@TypeOf(other)) {
+            if (self.count() != other.count()) {
+                if (self.scalar()) return (try self.broadcast(allocator, other.count())).zip(allocator, other);
+                if (other.scalar()) return self.zip(allocator, try other.broadcast(allocator, self.count()));
+                return error.MismatchedCount;
+            }
 
             var result: Zipped(@TypeOf(other)) = .{ .columns = undefined };
             inline for (fields) |field| @field(result.columns, field.name) = @field(self.columns, field.name);
@@ -308,8 +335,9 @@ test "zip pairs layers by name, and the order does not change the type" {
     const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 } } } };
     const accents: inner(.{ .volume = Volume }) = .{ .columns = .{ .volume = &.{ .{ .value = 1.0 }, .{ .value = 0.5 } } } };
 
-    const score = try (try rhythm.zip(notes)).zip(accents);
-    const reordered = try (try accents.zip(notes)).zip(rhythm);
+    const allocator = std.testing.allocator;
+    const score = try (try rhythm.zip(allocator, notes)).zip(allocator, accents);
+    const reordered = try (try accents.zip(allocator, notes)).zip(allocator, rhythm);
     comptime std.debug.assert(@TypeOf(score) == Score);
     comptime std.debug.assert(@TypeOf(reordered) == Score);
     comptime std.debug.assert(inner(.{ .volume = Volume, .pitch = Pitch, .timing = Timing }) == Score);
@@ -319,9 +347,73 @@ test "zip pairs layers by name, and the order does not change the type" {
 }
 
 test "zip returns an error for different counts" {
+    const allocator = std.testing.allocator;
     const rhythm: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 1.0 } } } };
-    const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{.{ .semitones = 0 }} } };
-    try std.testing.expectError(error.MismatchedCount, rhythm.zip(notes));
+    const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 }, .{ .semitones = 12 } } } };
+    try std.testing.expectError(error.MismatchedCount, rhythm.zip(allocator, notes));
+    try std.testing.expectError(error.MismatchedCount, notes.zip(allocator, rhythm));
+}
+
+test "zip broadcasts a layer of one element that is not placed in time, on either side" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const cell: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 0.5 } } }, .extent = 1.0 };
+    const rhythm = try cell.repeat(allocator, 2);
+    const e2: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{.{ .semitones = -29 }} } };
+
+    const melody = try rhythm.zip(allocator, e2);
+    const reordered = try e2.zip(allocator, rhythm);
+    comptime std.debug.assert(@TypeOf(melody) == @TypeOf(reordered));
+    try std.testing.expectEqualDeep(melody, reordered);
+
+    try std.testing.expectEqual(@as(usize, 4), melody.count());
+    for (melody.columns.pitch) |pitch| try std.testing.expectEqual(@as(i32, -29), pitch.semitones);
+    try std.testing.expectEqual(rhythm.columns.timing, melody.columns.timing);
+}
+
+test "a broadcast keeps the extent and origins of the other layer" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const cell: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 0.5 } } }, .extent = 1.0 };
+    const rhythm = try cell.repeat(allocator, 2);
+    const loud: inner(.{ .volume = Volume }) = .{ .columns = .{ .volume = &.{.{ .value = 0.8 }} } };
+
+    for ([_]@TypeOf(try rhythm.zip(allocator, loud)){ try rhythm.zip(allocator, loud), try loud.zip(allocator, rhythm) }) |accented| {
+        try std.testing.expectEqual(@as(f64, 2.0), accented.extent);
+        try std.testing.expectEqualSlices(f64, &.{ 0, 0, 1, 1 }, accented.origins);
+    }
+}
+
+test "zip does not broadcast a layer of one element placed in time" {
+    const allocator = std.testing.allocator;
+    const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 } } } };
+
+    // One chord that lasts two bars, like the ending of a piece.
+    const long: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{.{}} }, .extent = 8.0 };
+    try std.testing.expectError(error.MismatchedCount, notes.zip(allocator, long));
+    try std.testing.expectError(error.MismatchedCount, long.zip(allocator, notes));
+
+    // Placed by its origins alone.
+    const late: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{.{}} }, .origins = &.{4.0} };
+    try std.testing.expectError(error.MismatchedCount, notes.zip(allocator, late));
+    try std.testing.expectError(error.MismatchedCount, late.zip(allocator, notes));
+}
+
+test "a broadcast onto a layer of no elements gives no elements" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const rest = inner(.{ .timing = Timing }).empty(4.0);
+    const e2: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{.{ .semitones = -29 }} } };
+    for ([_]@TypeOf(try rest.zip(allocator, e2)){ try rest.zip(allocator, e2), try e2.zip(allocator, rest) }) |silence| {
+        try std.testing.expectEqual(@as(usize, 0), silence.count());
+        try std.testing.expectEqual(@as(f64, 4.0), silence.extent);
+    }
 }
 
 test "zip keeps the timeline of the layer that is placed in time" {
@@ -334,7 +426,7 @@ test "zip keeps the timeline of the layer that is placed in time" {
     const note: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{.{ .semitones = 0 }} } };
     const notes = try note.repeat(allocator, 2);
 
-    const melody = try notes.zip(rhythm);
+    const melody = try notes.zip(allocator, rhythm);
     try std.testing.expectEqual(@as(f64, 2.0), melody.extent);
     try std.testing.expectEqualSlices(f64, &.{ 0.0, 1.0 }, melody.origins);
 }
@@ -346,12 +438,12 @@ test "zip rejects two different timelines" {
 
     const cell: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{.{}} }, .extent = 1.0 };
     const accent: inner(.{ .volume = Volume }) = .{ .columns = .{ .volume = &.{.{}} }, .extent = 2.0 };
-    try std.testing.expectError(error.MismatchedExtent, cell.zip(accent));
+    try std.testing.expectError(error.MismatchedExtent, cell.zip(allocator, accent));
 
     // Same extents, different origins.
     const two_cells = try cell.repeat(allocator, 2);
     const late: inner(.{ .volume = Volume }) = .{ .columns = .{ .volume = &.{ .{}, .{} } }, .extent = 2.0, .origins = &.{ 0.0, 0.5 } };
-    try std.testing.expectError(error.MismatchedExtent, two_cells.zip(late));
+    try std.testing.expectError(error.MismatchedExtent, two_cells.zip(allocator, late));
 }
 
 test "concat places the second layer after the extent of the first" {
@@ -430,7 +522,7 @@ test "map transforms one primitive and keeps the others" {
 
     const rhythm: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 1.0 } } }, .extent = 2.0 };
     const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 } } } };
-    const melody = try rhythm.zip(notes);
+    const melody = try rhythm.zip(allocator, notes);
 
     const up = try melody.map(allocator, .pitch, Transpose{ .semitones = 12 });
     try std.testing.expectEqual(@as(i32, 12), up.columns.pitch[0].semitones);
@@ -448,7 +540,7 @@ test "resolve returns one named value per primitive" {
 
     const rhythm: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 1.0 } } } };
     const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 12 } } } };
-    const resolved = try (try rhythm.zip(notes)).resolve(allocator, test_ctx);
+    const resolved = try (try rhythm.zip(allocator, notes)).resolve(allocator, test_ctx);
 
     try std.testing.expectEqual(@as(usize, 0), resolved[0].timing);
     try std.testing.expectEqual(@as(f64, 440.0), resolved[0].pitch);
