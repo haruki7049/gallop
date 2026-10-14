@@ -167,11 +167,13 @@ const Section = struct {
 /// Concatenates `sections` in order, body by body.
 fn join(comptime S: type, allocator: std.mem.Allocator, sections: []const S) !S {
     var result: S = undefined;
+
     inline for (@typeInfo(S).@"struct".fields) |field| {
         const parts = try allocator.alloc(field.type, sections.len);
         for (sections, parts) |section, *part| part.* = @field(section, field.name);
         @field(result, field.name) = try field.type.join(allocator, parts);
     }
+
     return result;
 }
 
@@ -210,7 +212,9 @@ fn bassline(allocator: std.mem.Allocator, melody: Melody, volume: Volumes) !Bass
 /// `mute`.
 fn chugging(allocator: std.mem.Allocator, melody: Melody, bars: usize, mute: []const Mute) !GuitarLine {
     const volume = try Volumes.notate(&chug).repeat(allocator, bars);
-    return (try melody.zip(allocator, volume)).zip(allocator, try Mutes.notate(mute).repeat(allocator, bars * configs.BEATS_PER_BAR));
+    const mutes = try Mutes.notate(mute).repeat(allocator, bars * configs.BEATS_PER_BAR);
+
+    return (try melody.zip(allocator, volume)).zip(allocator, mutes);
 }
 
 /// The intro: guitars on E; the bass, the kick and the hi-hat join after two bars.
@@ -218,8 +222,11 @@ fn intro(allocator: std.mem.Allocator, measure: Rhythm) !Section {
     const bars = intro_bars;
     // Bars the guitars play alone.
     const alone = 2;
+
     const rhythm = try measure.repeat(allocator, bars);
+
     const melody = try rhythm.zip(allocator, e2);
+
     return .{
         .kick = try rhythm.zip(allocator, try Volumes.join(allocator, &.{
             try Volumes.notate(&silent_bar).repeat(allocator, alone),
@@ -234,6 +241,7 @@ fn intro(allocator: std.mem.Allocator, measure: Rhythm) !Section {
             try Volumes.notate(&silent_bar).repeat(allocator, alone),
             try Volumes.notate(&hat_quarters).repeat(allocator, bars - alone),
         }))).zip(allocator, try Strokes.notate(&closed_bar).repeat(allocator, bars)),
+
         .bass = try bassline(allocator, melody, try Volumes.join(allocator, &.{
             try Volumes.notate(&silent_bar).repeat(allocator, alone),
             try Volumes.notate(&chug).repeat(allocator, bars - alone),
@@ -245,14 +253,18 @@ fn intro(allocator: std.mem.Allocator, measure: Rhythm) !Section {
 /// A verse: the riff twice, the kick on beats 0 and 2.
 fn verse(allocator: std.mem.Allocator, measure: Rhythm) !Section {
     const bars = verse_bars;
+
     const rhythm = try measure.repeat(allocator, bars);
+
     const theme = try riff(allocator, measure);
     const melody = try theme.concat(allocator, theme);
+
     return .{
         .kick = try rhythm.zip(allocator, try Volumes.notate(&kick_verse).repeat(allocator, bars)),
         .snare = try rhythm.zip(allocator, try backbeat(allocator, bars)),
         .crash = try rhythm.zip(allocator, try opening(allocator, bars)),
         .hihat = try (try rhythm.zip(allocator, try Volumes.notate(&hat_quarters).repeat(allocator, bars))).zip(allocator, try Strokes.notate(&closed_bar).repeat(allocator, bars)),
+
         .bass = try bassline(allocator, melody, try Volumes.notate(&chug).repeat(allocator, bars)),
         .guitar_root = try chugging(allocator, melody, bars, &chug_mute),
     };
@@ -262,14 +274,18 @@ fn verse(allocator: std.mem.Allocator, measure: Rhythm) !Section {
 /// two bars.
 fn lift(allocator: std.mem.Allocator, measure: Rhythm) !Section {
     const bars = verse_bars;
+
     const rhythm = try measure.repeat(allocator, bars);
+
     const theme = try riff(allocator, measure);
     const melody = try (try theme.concat(allocator, theme)).map(allocator, .pitch, Transpose{ .semitones = 5 });
+
     return .{
         .kick = try rhythm.zip(allocator, try Volumes.notate(&kick_drive).repeat(allocator, bars)),
         .snare = try rhythm.zip(allocator, try backbeat(allocator, bars)),
         .crash = try rhythm.zip(allocator, try opening(allocator, bars)),
         .hihat = try (try rhythm.zip(allocator, try Volumes.notate(&hat_lift).repeat(allocator, bars / 2))).zip(allocator, try Strokes.notate(&lift_strokes).repeat(allocator, bars / 2)),
+
         .bass = try bassline(allocator, melody, try Volumes.notate(&chug).repeat(allocator, bars)),
         .guitar_root = try chugging(allocator, melody, bars, &chug_mute),
     };
@@ -278,13 +294,17 @@ fn lift(allocator: std.mem.Allocator, measure: Rhythm) !Section {
 /// The climax: the riff transposed up a fifth, a crash on every bar, the guitars less muted.
 fn climax(allocator: std.mem.Allocator, measure: Rhythm) !Section {
     const bars = climax_bars;
+
     const rhythm = try measure.repeat(allocator, bars);
+
     const melody = try (try riff(allocator, measure)).map(allocator, .pitch, Transpose{ .semitones = 7 });
+
     return .{
         .kick = try rhythm.zip(allocator, try Volumes.notate(&kick_drive).repeat(allocator, bars)),
         .snare = try rhythm.zip(allocator, try backbeat(allocator, bars)),
         .crash = try rhythm.zip(allocator, try Volumes.notate(&crash_first).repeat(allocator, bars)),
         .hihat = try (try rhythm.zip(allocator, try Volumes.notate(&hat_lift).repeat(allocator, bars / 2))).zip(allocator, try Strokes.notate(&lift_strokes).repeat(allocator, bars / 2)),
+
         .bass = try bassline(allocator, melody, try Volumes.notate(&chug).repeat(allocator, bars)),
         .guitar_root = try chugging(allocator, melody, bars, &climax_mute),
     };
@@ -293,11 +313,13 @@ fn climax(allocator: std.mem.Allocator, measure: Rhythm) !Section {
 /// The ending: one open chord on E with the kick, the snare and the crash.
 fn finale(allocator: std.mem.Allocator) !Section {
     const melody = try ending.zip(allocator, e2);
+
     return .{
         .kick = try ending.zip(allocator, Volumes.notate(&.{.{ .value = 1.0 }})),
         .snare = try ending.zip(allocator, Volumes.notate(&.{.{ .value = 0.9 }})),
         .crash = try ending.zip(allocator, Volumes.notate(&.{.{ .value = 1.0 }})),
         .hihat = try (try ending.zip(allocator, Volumes.notate(&.{.{ .value = 0.0 }}))).zip(allocator, Strokes.notate(&.{.closed})),
+
         .bass = try bassline(allocator, melody, Volumes.notate(&.{.{ .value = 1.0 }})),
         .guitar_root = try (try melody.zip(allocator, Volumes.notate(&.{.{ .value = 1.0 }}))).zip(allocator, Mutes.notate(&.{.{ .amount = 0.0 }})),
     };
@@ -308,6 +330,7 @@ fn finale(allocator: std.mem.Allocator) !Section {
 pub fn compose(allocator: std.mem.Allocator) !Scores {
     // Every section but the ending is written on bars of the base gallop.
     const measure = try gallop.repeat(allocator, configs.BEATS_PER_BAR);
+
     const piece = try join(Section, allocator, &.{
         try intro(allocator, measure),
         try verse(allocator, measure),
@@ -316,6 +339,7 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
         try climax(allocator, measure),
         try finale(allocator),
     });
+
     return .{
         .kick = piece.kick,
         .snare = piece.snare,
@@ -323,6 +347,7 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
         .hihat = piece.hihat,
         .bass = piece.bass,
         .guitar_root = piece.guitar_root,
+
         // A power chord: the second string plays the root's score a fifth up.
         .guitar_fifth = try piece.guitar_root.map(allocator, .pitch, Transpose{ .semitones = 7 }),
     };
