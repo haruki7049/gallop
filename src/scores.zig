@@ -11,7 +11,8 @@
 //!
 //! Every vibrating body plays on the same timeline, derived from the base gallop: 128 gallops
 //! and the final chord. Vibrating bodies differ only in the primitives zipped onto it; a zero
-//! volume is a rest.
+//! volume is a rest. The pitched bodies take it from the melody, where each root is zipped onto
+//! a bar of it.
 
 const std = @import("std");
 const score = @import("score");
@@ -35,6 +36,8 @@ const Mutes = score.Layer(.{ .mute = Mute });
 const Strokes = score.Layer(.{ .stroke = Stroke });
 /// A list of pitches.
 const Pitches = score.Layer(.{ .pitch = Pitch });
+/// A rhythm with a pitch on every note.
+const Melody = score.Layer(.{ .timing = score.Timing, .duration = score.Duration, .pitch = Pitch });
 
 /// Score of a drum: kick, snare or crash.
 pub const Hits = score.Layer(.{ .timing = score.Timing, .duration = score.Duration, .volume = Volume });
@@ -70,12 +73,14 @@ const climax_bars = 4;
 /// Bars of gallops before the ending.
 const gallop_bars = intro_bars + 3 * verse_bars + climax_bars;
 
-/// E2: the root of the intro, of the first two bars of the riff, and of the final chord.
-const e2: Pitch = .{ .name = .{ .code = .e, .octave = 2 } };
+/// E2: the root of the intro, of the first two bars of the riff, and of the final chord. Like
+/// every root, a layer of one pitch that is not placed in time, so that zip copies it onto
+/// every note of a rhythm.
+const e2: Pitches = .{ .columns = .{ .pitch = &.{.{ .name = .{ .code = .e, .octave = 2 } }} } };
 /// C3: the root of the third bar of the riff.
-const c3: Pitch = .{ .name = .{ .code = .c, .octave = 3 } };
+const c3: Pitches = .{ .columns = .{ .pitch = &.{.{ .name = .{ .code = .c, .octave = 3 } }} } };
 /// D3: the root of the fourth bar of the riff.
-const d3: Pitch = .{ .name = .{ .code = .d, .octave = 3 } };
+const d3: Pitches = .{ .columns = .{ .pitch = &.{.{ .name = .{ .code = .d, .octave = 3 } }} } };
 
 /// One bar of volumes, written as four gallops of three notes each.
 fn bar(comptime gallops: [4][3]T) [12]Volume {
@@ -167,22 +172,24 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
     // One timeline for every body: the gallop, again and again, then the final chord.
     const timeline = try (try gallop.repeat(allocator, gallop_bars * configs.BEATS_PER_BAR)).concat(allocator, ending);
 
-    // Roots, one per bar, every note of the bar on it. The verse is the riff twice; the lift
-    // and the climax are transpositions of it.
-    const riff = try join(Pitches, allocator, &.{
-        try pattern(Pitches, allocator, &.{e2}, 12),
-        try pattern(Pitches, allocator, &.{e2}, 12),
-        try pattern(Pitches, allocator, &.{c3}, 12),
-        try pattern(Pitches, allocator, &.{d3}, 12),
+    // Roots, one per bar, zipped onto every note of the bar. The verse is the riff twice; the
+    // lift and the climax are transpositions of it. The melody follows the same gallops as the
+    // timeline.
+    const measure = try gallop.repeat(allocator, configs.BEATS_PER_BAR);
+    const riff = try join(Melody, allocator, &.{
+        try measure.zip(allocator, e2),
+        try measure.zip(allocator, e2),
+        try measure.zip(allocator, c3),
+        try measure.zip(allocator, d3),
     });
     const verse = try riff.concat(allocator, riff);
-    const roots = try join(Pitches, allocator, &.{
-        try pattern(Pitches, allocator, &.{e2}, intro_bars * 12),
+    const melody = try join(Melody, allocator, &.{
+        try (try measure.repeat(allocator, intro_bars)).zip(allocator, e2),
         verse,
         try verse.map(allocator, .pitch, Transpose{ .semitones = 5 }),
         verse,
         try riff.map(allocator, .pitch, Transpose{ .semitones = 7 }),
-        try pattern(Pitches, allocator, &.{e2}, 1),
+        try ending.zip(allocator, e2),
     });
 
     const kick = try join(Volumes, allocator, &.{
@@ -249,13 +256,13 @@ pub fn compose(allocator: std.mem.Allocator) !Scores {
         try pattern(Mutes, allocator, &.{.{ .amount = 0.0 }}, 1),
     });
 
-    const guitar_root = try (try (try timeline.zip(allocator, guitar_volume)).zip(allocator, guitar_mute)).zip(allocator, roots);
+    const guitar_root = try (try melody.zip(allocator, guitar_volume)).zip(allocator, guitar_mute);
     return .{
         .kick = try timeline.zip(allocator, kick),
         .snare = try timeline.zip(allocator, snare),
         .crash = try timeline.zip(allocator, crash),
         .hihat = try (try timeline.zip(allocator, hat_volume)).zip(allocator, hat_stroke),
-        .bass = try (try timeline.zip(allocator, bass_volume)).zip(allocator, try roots.map(allocator, .pitch, Transpose{ .semitones = -12 })),
+        .bass = try (try melody.map(allocator, .pitch, Transpose{ .semitones = -12 })).zip(allocator, bass_volume),
         .guitar_root = guitar_root,
         // A power chord: the second string plays the root's score a fifth up.
         .guitar_fifth = try guitar_root.map(allocator, .pitch, Transpose{ .semitones = 7 }),
@@ -273,6 +280,10 @@ test "every vibrating body plays on the same timeline of 34 bars" {
         const layer = @field(scores, field.name);
         try std.testing.expectEqual(@as(usize, notes), layer.count());
         try std.testing.expectEqual(beats, layer.extent);
+        // The melody is built apart from the timeline; every note must still fall on it.
+        try std.testing.expectEqualSlices(f64, scores.kick.origins, layer.origins);
+        try std.testing.expectEqualDeep(scores.kick.columns.timing, layer.columns.timing);
+        try std.testing.expectEqualDeep(scores.kick.columns.duration, layer.columns.duration);
     }
 }
 
