@@ -9,10 +9,10 @@
 //!     bars 28-31  climax   the first half of the verse transposed up a fifth
 //!     bars 32-33  ending   one open chord on E
 //!
-//! Every vibrating body plays on the same timeline, derived from the base gallop: 128 gallops
-//! and the final chord. Vibrating bodies differ only in the primitives zipped onto it; a zero
-//! volume is a rest. The pitched bodies take it from the melody, where each root is zipped onto
-//! a bar of it.
+//! Each section of the form is written as a function that gives the score of every vibrating
+//! body for that section, and the sections are joined body by body. Within a section, every body
+//! zips its primitives onto bars of the base gallop (or the final chord), so every body plays on
+//! the same timeline: 128 gallops and the final chord. A zero volume is a rest.
 
 const std = @import("std");
 const score = @import("score");
@@ -147,106 +147,209 @@ pub const Scores = struct {
     guitar_fifth: GuitarLine,
 };
 
-/// Writes the score of every vibrating body with an arena-like `allocator`: nothing is freed
-/// until the whole score is.
-pub fn compose(allocator: std.mem.Allocator) !Scores {
-    // One timeline for every body: the gallop, again and again, then the final chord.
-    const timeline = try (try gallop.repeat(allocator, gallop_bars * configs.BEATS_PER_BAR)).concat(allocator, ending);
+/// One section of the form: the score of every vibrating body but the fifth string, which is
+/// derived from the root string once the sections are joined.
+const Section = struct {
+    /// The kick drum.
+    kick: Hits,
+    /// The snare drum.
+    snare: Hits,
+    /// The crash cymbal.
+    crash: Hits,
+    /// The hi-hat, closed and open.
+    hihat: HiHat,
+    /// The bass.
+    bass: BassLine,
+    /// The root string of each guitar.
+    guitar_root: GuitarLine,
+};
 
-    // Roots, one per bar, zipped onto every note of the bar. The verse is the riff twice; the
-    // lift and the climax are transpositions of it. The melody follows the same gallops as the
-    // timeline.
-    const measure = try gallop.repeat(allocator, configs.BEATS_PER_BAR);
-    const riff = try Melody.join(allocator, &.{
+/// Concatenates `sections` in order, body by body.
+fn join(comptime S: type, allocator: std.mem.Allocator, sections: []const S) !S {
+    var result: S = undefined;
+
+    inline for (@typeInfo(S).@"struct".fields) |field| {
+        const parts = try allocator.alloc(field.type, sections.len);
+        for (sections, parts) |section, *part| part.* = @field(section, field.name);
+        @field(result, field.name) = try field.type.join(allocator, parts);
+    }
+
+    return result;
+}
+
+/// The riff on four bars of `measure`: E E C D, one root per bar.
+fn riff(allocator: std.mem.Allocator, measure: Rhythm) !Melody {
+    return Melody.join(allocator, &.{
         try measure.zip(allocator, e2),
         try measure.zip(allocator, e2),
         try measure.zip(allocator, c3),
         try measure.zip(allocator, d3),
     });
-    const verse = try riff.concat(allocator, riff);
-    const melody = try Melody.join(allocator, &.{
-        try (try measure.repeat(allocator, intro_bars)).zip(allocator, e2),
-        verse,
-        try verse.map(allocator, .pitch, Transpose{ .semitones = 5 }),
-        verse,
-        try riff.map(allocator, .pitch, Transpose{ .semitones = 7 }),
-        try ending.zip(allocator, e2),
-    });
+}
 
-    const kick = try Volumes.join(allocator, &.{
-        try Volumes.notate(&silent_bar).repeat(allocator, 2),
-        try Volumes.notate(&kick_four).repeat(allocator, intro_bars - 2),
-        try Volumes.notate(&kick_verse).repeat(allocator, verse_bars),
-        try Volumes.notate(&kick_drive).repeat(allocator, verse_bars),
-        try Volumes.notate(&kick_verse).repeat(allocator, verse_bars),
-        try Volumes.notate(&kick_drive).repeat(allocator, climax_bars),
-        Volumes.notate(&.{.{ .value = 1.0 }}),
-    });
-
-    const snare_section = try (try Volumes.notate(&snare_backbeat).repeat(allocator, verse_bars - 1)).concat(allocator, Volumes.notate(&snare_fill));
-    const snare = try Volumes.join(allocator, &.{
-        try Volumes.notate(&silent_bar).repeat(allocator, intro_bars - 1),
+/// The snare of a section of `bars` bars: the backbeat, and a fill in the last bar.
+fn backbeat(allocator: std.mem.Allocator, bars: usize) !Volumes {
+    return Volumes.join(allocator, &.{
+        try Volumes.notate(&snare_backbeat).repeat(allocator, bars - 1),
         Volumes.notate(&snare_fill),
-        snare_section,
-        snare_section,
-        snare_section,
-        try Volumes.notate(&snare_backbeat).repeat(allocator, climax_bars - 1),
-        Volumes.notate(&snare_fill),
-        Volumes.notate(&.{.{ .value = 0.9 }}),
     });
+}
 
-    const crash_section = try Volumes.notate(&crash_first).concat(allocator, try Volumes.notate(&silent_bar).repeat(allocator, verse_bars - 1));
-    const crash = try Volumes.join(allocator, &.{
-        try Volumes.notate(&silent_bar).repeat(allocator, intro_bars),
-        crash_section,
-        crash_section,
-        crash_section,
-        try Volumes.notate(&crash_first).repeat(allocator, climax_bars),
-        Volumes.notate(&.{.{ .value = 1.0 }}),
+/// The crash of a section of `bars` bars: on the first note of the first bar only.
+fn opening(allocator: std.mem.Allocator, bars: usize) !Volumes {
+    return Volumes.join(allocator, &.{
+        Volumes.notate(&crash_first),
+        try Volumes.notate(&silent_bar).repeat(allocator, bars - 1),
     });
+}
 
-    const hat_volume = try Volumes.join(allocator, &.{
-        try Volumes.notate(&silent_bar).repeat(allocator, 2),
-        try Volumes.notate(&hat_quarters).repeat(allocator, intro_bars - 2 + verse_bars),
-        try Volumes.notate(&hat_lift).repeat(allocator, verse_bars / 2),
-        try Volumes.notate(&hat_quarters).repeat(allocator, verse_bars),
-        try Volumes.notate(&hat_lift).repeat(allocator, climax_bars / 2),
-        Volumes.notate(&.{.{ .value = 0.0 }}),
-    });
-    const hat_stroke = try Strokes.join(allocator, &.{
-        try Strokes.notate(&closed_bar).repeat(allocator, intro_bars + verse_bars),
-        try Strokes.notate(&lift_strokes).repeat(allocator, verse_bars / 2),
-        try Strokes.notate(&closed_bar).repeat(allocator, verse_bars),
-        try Strokes.notate(&lift_strokes).repeat(allocator, climax_bars / 2),
-        Strokes.notate(&.{.closed}),
-    });
+/// The bass of a section: `melody` an octave down, at `volume`.
+fn bassline(allocator: std.mem.Allocator, melody: Melody, volume: Volumes) !BassLine {
+    return (try melody.map(allocator, .pitch, Transpose{ .semitones = -12 })).zip(allocator, volume);
+}
 
-    const bass_volume = try Volumes.join(allocator, &.{
-        try Volumes.notate(&silent_bar).repeat(allocator, 2),
-        try Volumes.notate(&chug).repeat(allocator, gallop_bars - 2),
-        Volumes.notate(&.{.{ .value = 1.0 }}),
-    });
+/// The root string of a section of `bars` bars: `melody` chugging, every gallop palm-muted as
+/// `mute`.
+fn chugging(allocator: std.mem.Allocator, melody: Melody, bars: usize, mute: []const Mute) !GuitarLine {
+    const volume = try Volumes.notate(&chug).repeat(allocator, bars);
+    const mutes = try Mutes.notate(mute).repeat(allocator, bars * configs.BEATS_PER_BAR);
 
-    const guitar_volume = try Volumes.join(allocator, &.{
-        try Volumes.notate(&chug).repeat(allocator, gallop_bars),
-        Volumes.notate(&.{.{ .value = 1.0 }}),
-    });
-    const guitar_mute = try Mutes.join(allocator, &.{
-        try Mutes.notate(&chug_mute).repeat(allocator, (gallop_bars - climax_bars) * configs.BEATS_PER_BAR),
-        try Mutes.notate(&climax_mute).repeat(allocator, climax_bars * configs.BEATS_PER_BAR),
-        Mutes.notate(&.{.{ .amount = 0.0 }}),
-    });
+    return (try melody.zip(allocator, volume)).zip(allocator, mutes);
+}
 
-    const guitar_root = try (try melody.zip(allocator, guitar_volume)).zip(allocator, guitar_mute);
+/// The intro: guitars on E; the bass, the kick and the hi-hat join after two bars.
+fn intro(allocator: std.mem.Allocator, measure: Rhythm) !Section {
+    const bars = intro_bars;
+    // Bars the guitars play alone.
+    const alone = 2;
+
+    const rhythm = try measure.repeat(allocator, bars);
+
+    const melody = try rhythm.zip(allocator, e2);
+
     return .{
-        .kick = try timeline.zip(allocator, kick),
-        .snare = try timeline.zip(allocator, snare),
-        .crash = try timeline.zip(allocator, crash),
-        .hihat = try (try timeline.zip(allocator, hat_volume)).zip(allocator, hat_stroke),
-        .bass = try (try melody.map(allocator, .pitch, Transpose{ .semitones = -12 })).zip(allocator, bass_volume),
-        .guitar_root = guitar_root,
+        .kick = try rhythm.zip(allocator, try Volumes.join(allocator, &.{
+            try Volumes.notate(&silent_bar).repeat(allocator, alone),
+            try Volumes.notate(&kick_four).repeat(allocator, bars - alone),
+        })),
+        .snare = try rhythm.zip(allocator, try Volumes.join(allocator, &.{
+            try Volumes.notate(&silent_bar).repeat(allocator, bars - 1),
+            Volumes.notate(&snare_fill),
+        })),
+        .crash = try rhythm.zip(allocator, try Volumes.notate(&silent_bar).repeat(allocator, bars)),
+        .hihat = try (try rhythm.zip(allocator, try Volumes.join(allocator, &.{
+            try Volumes.notate(&silent_bar).repeat(allocator, alone),
+            try Volumes.notate(&hat_quarters).repeat(allocator, bars - alone),
+        }))).zip(allocator, try Strokes.notate(&closed_bar).repeat(allocator, bars)),
+
+        .bass = try bassline(allocator, melody, try Volumes.join(allocator, &.{
+            try Volumes.notate(&silent_bar).repeat(allocator, alone),
+            try Volumes.notate(&chug).repeat(allocator, bars - alone),
+        })),
+        .guitar_root = try chugging(allocator, melody, bars, &chug_mute),
+    };
+}
+
+/// A verse: the riff twice, the kick on beats 0 and 2.
+fn verse(allocator: std.mem.Allocator, measure: Rhythm) !Section {
+    const bars = verse_bars;
+
+    const rhythm = try measure.repeat(allocator, bars);
+
+    const theme = try riff(allocator, measure);
+    const melody = try theme.concat(allocator, theme);
+
+    return .{
+        .kick = try rhythm.zip(allocator, try Volumes.notate(&kick_verse).repeat(allocator, bars)),
+        .snare = try rhythm.zip(allocator, try backbeat(allocator, bars)),
+        .crash = try rhythm.zip(allocator, try opening(allocator, bars)),
+        .hihat = try (try rhythm.zip(allocator, try Volumes.notate(&hat_quarters).repeat(allocator, bars))).zip(allocator, try Strokes.notate(&closed_bar).repeat(allocator, bars)),
+
+        .bass = try bassline(allocator, melody, try Volumes.notate(&chug).repeat(allocator, bars)),
+        .guitar_root = try chugging(allocator, melody, bars, &chug_mute),
+    };
+}
+
+/// The lift: the verse transposed up a fourth, the kick on every gallop, an open hi-hat every
+/// two bars.
+fn lift(allocator: std.mem.Allocator, measure: Rhythm) !Section {
+    const bars = verse_bars;
+
+    const rhythm = try measure.repeat(allocator, bars);
+
+    const theme = try riff(allocator, measure);
+    const melody = try (try theme.concat(allocator, theme)).map(allocator, .pitch, Transpose{ .semitones = 5 });
+
+    return .{
+        .kick = try rhythm.zip(allocator, try Volumes.notate(&kick_drive).repeat(allocator, bars)),
+        .snare = try rhythm.zip(allocator, try backbeat(allocator, bars)),
+        .crash = try rhythm.zip(allocator, try opening(allocator, bars)),
+        .hihat = try (try rhythm.zip(allocator, try Volumes.notate(&hat_lift).repeat(allocator, bars / 2))).zip(allocator, try Strokes.notate(&lift_strokes).repeat(allocator, bars / 2)),
+
+        .bass = try bassline(allocator, melody, try Volumes.notate(&chug).repeat(allocator, bars)),
+        .guitar_root = try chugging(allocator, melody, bars, &chug_mute),
+    };
+}
+
+/// The climax: the riff transposed up a fifth, a crash on every bar, the guitars less muted.
+fn climax(allocator: std.mem.Allocator, measure: Rhythm) !Section {
+    const bars = climax_bars;
+
+    const rhythm = try measure.repeat(allocator, bars);
+
+    const melody = try (try riff(allocator, measure)).map(allocator, .pitch, Transpose{ .semitones = 7 });
+
+    return .{
+        .kick = try rhythm.zip(allocator, try Volumes.notate(&kick_drive).repeat(allocator, bars)),
+        .snare = try rhythm.zip(allocator, try backbeat(allocator, bars)),
+        .crash = try rhythm.zip(allocator, try Volumes.notate(&crash_first).repeat(allocator, bars)),
+        .hihat = try (try rhythm.zip(allocator, try Volumes.notate(&hat_lift).repeat(allocator, bars / 2))).zip(allocator, try Strokes.notate(&lift_strokes).repeat(allocator, bars / 2)),
+
+        .bass = try bassline(allocator, melody, try Volumes.notate(&chug).repeat(allocator, bars)),
+        .guitar_root = try chugging(allocator, melody, bars, &climax_mute),
+    };
+}
+
+/// The ending: one open chord on E with the kick, the snare and the crash.
+fn finale(allocator: std.mem.Allocator) !Section {
+    const melody = try ending.zip(allocator, e2);
+
+    return .{
+        .kick = try ending.zip(allocator, Volumes.notate(&.{.{ .value = 1.0 }})),
+        .snare = try ending.zip(allocator, Volumes.notate(&.{.{ .value = 0.9 }})),
+        .crash = try ending.zip(allocator, Volumes.notate(&.{.{ .value = 1.0 }})),
+        .hihat = try (try ending.zip(allocator, Volumes.notate(&.{.{ .value = 0.0 }}))).zip(allocator, Strokes.notate(&.{.closed})),
+
+        .bass = try bassline(allocator, melody, Volumes.notate(&.{.{ .value = 1.0 }})),
+        .guitar_root = try (try melody.zip(allocator, Volumes.notate(&.{.{ .value = 1.0 }}))).zip(allocator, Mutes.notate(&.{.{ .amount = 0.0 }})),
+    };
+}
+
+/// Writes the score of every vibrating body with an arena-like `allocator`: nothing is freed
+/// until the whole score is.
+pub fn compose(allocator: std.mem.Allocator) !Scores {
+    // Every section but the ending is written on bars of the base gallop.
+    const measure = try gallop.repeat(allocator, configs.BEATS_PER_BAR);
+
+    const piece = try join(Section, allocator, &.{
+        try intro(allocator, measure),
+        try verse(allocator, measure),
+        try lift(allocator, measure),
+        try verse(allocator, measure),
+        try climax(allocator, measure),
+        try finale(allocator),
+    });
+
+    return .{
+        .kick = piece.kick,
+        .snare = piece.snare,
+        .crash = piece.crash,
+        .hihat = piece.hihat,
+        .bass = piece.bass,
+        .guitar_root = piece.guitar_root,
+
         // A power chord: the second string plays the root's score a fifth up.
-        .guitar_fifth = try guitar_root.map(allocator, .pitch, Transpose{ .semitones = 7 }),
+        .guitar_fifth = try piece.guitar_root.map(allocator, .pitch, Transpose{ .semitones = 7 }),
     };
 }
 
@@ -261,7 +364,7 @@ test "every vibrating body plays on the same timeline of 34 bars" {
         const layer = @field(scores, field.name);
         try std.testing.expectEqual(@as(usize, notes), layer.count());
         try std.testing.expectEqual(beats, layer.extent);
-        // The melody is built apart from the timeline; every note must still fall on it.
+        // Every section writes each body on its own copy of the bars; they must still agree.
         try std.testing.expectEqualSlices(f64, scores.kick.origins, layer.origins);
         try std.testing.expectEqualDeep(scores.kick.columns.timing, layer.columns.timing);
         try std.testing.expectEqualDeep(scores.kick.columns.duration, layer.columns.duration);
