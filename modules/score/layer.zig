@@ -414,6 +414,62 @@ test "a broadcast onto a layer of no elements gives no elements" {
         try std.testing.expectEqual(@as(usize, 0), silence.count());
         try std.testing.expectEqual(@as(f64, 4.0), silence.extent);
     }
+
+    // A layer of one element placed in time is not broadcast, even onto no elements.
+    const long: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{.{ .semitones = -29 }} }, .extent = 8.0 };
+    try std.testing.expectError(error.MismatchedCount, rest.zip(allocator, long));
+    try std.testing.expectError(error.MismatchedCount, long.zip(allocator, rest));
+}
+
+test "zip allocates nothing without a broadcast" {
+    const allocator = std.testing.failing_allocator;
+    const rhythm: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 1.0 } } }, .extent = 2.0 };
+    const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 } } } };
+
+    const melody = try rhythm.zip(allocator, notes);
+    try std.testing.expectEqual(rhythm.columns.timing.ptr, melody.columns.timing.ptr);
+    try std.testing.expectEqual(notes.columns.pitch.ptr, melody.columns.pitch.ptr);
+}
+
+test "a broadcast returns the error of the allocator" {
+    const allocator = std.testing.failing_allocator;
+    const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 } } } };
+    const loud: inner(.{ .volume = Volume }) = .{ .columns = .{ .volume = &.{.{ .value = 0.8 }} } };
+    try std.testing.expectError(error.OutOfMemory, notes.zip(allocator, loud));
+    try std.testing.expectError(error.OutOfMemory, loud.zip(allocator, notes));
+}
+
+test "a broadcast copies every primitive of the element" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const rhythm: inner(.{ .timing = Timing }) = .{ .columns = .{ .timing = &.{ .{}, .{ .beat = 1.0 }, .{ .beat = 2.0 } } }, .extent = 3.0 };
+    const accented_e2: inner(.{ .pitch = Pitch, .volume = Volume }) = .{
+        .columns = .{ .pitch = &.{.{ .semitones = -29 }}, .volume = &.{.{ .value = 0.8 }} },
+    };
+
+    const melody = try rhythm.zip(allocator, accented_e2);
+    try std.testing.expectEqual(@as(usize, 3), melody.count());
+    for (melody.columns.pitch, melody.columns.volume) |pitch, volume| {
+        try std.testing.expectEqual(@as(i32, -29), pitch.semitones);
+        try std.testing.expectEqual(@as(f64, 0.8), volume.value);
+    }
+}
+
+test "a broadcast onto a layer not placed in time is not placed in time" {
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+
+    const notes: inner(.{ .pitch = Pitch }) = .{ .columns = .{ .pitch = &.{ .{ .semitones = 0 }, .{ .semitones = 7 }, .{ .semitones = 12 } } } };
+    const loud: inner(.{ .volume = Volume }) = .{ .columns = .{ .volume = &.{.{ .value = 0.8 }} } };
+
+    for ([_]@TypeOf(try notes.zip(allocator, loud)){ try notes.zip(allocator, loud), try loud.zip(allocator, notes) }) |accented| {
+        try std.testing.expectEqual(@as(usize, 3), accented.count());
+        try std.testing.expectEqual(@as(f64, 0.0), accented.extent);
+        try std.testing.expectEqual(@as(usize, 0), accented.origins.len);
+    }
 }
 
 test "zip keeps the timeline of the layer that is placed in time" {
